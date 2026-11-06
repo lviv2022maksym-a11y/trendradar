@@ -1,0 +1,22 @@
+[Unit]
+Description=TrendRadar Trader (Alpaca + Telegram)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trendradar
+WorkingDirectory=/opt/trendradar
+EnvironmentFile=/etc/trendradar.env
+ExecStart=/opt/trendradar/.venv/bin/python -u trader.py
+Restart=always
+RestartSec=15
+# Захист: служба бачить лише свою папку з даними, без прав адміністратора
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/trendradar
+
+[Install]
+WantedBy=multi-user.target

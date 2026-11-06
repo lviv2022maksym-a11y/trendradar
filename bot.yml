@@ -1,0 +1,97 @@
+name: TrendRadar · сигнали, новини, сайт
+
+on:
+  schedule:
+    - cron: "4 * * * *"        # щогодини (на 4-й хвилині — одразу після закриття свічок)
+  workflow_dispatch:
+    inputs:
+      summary:
+        description: "Одразу надіслати огляд ринку"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pages: write        # оновлення сайту-програми на GitHub Pages
+  id-token: write
+
+concurrency:
+  group: trendradar
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install --prefer-binary -r requirements.txt
+
+      - name: Відновити пам'ять бота
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: state-
+
+      - name: Зібрати новини
+        run: python news.py --out site_data
+        continue-on-error: true
+
+      - name: Відновити кеш акцій
+        uses: actions/cache/restore@v4
+        with:
+          path: stock_cache
+          key: stocks-${{ github.run_id }}
+          restore-keys: stocks-
+      - name: Акції (оновлюються раз на день після закриття біржі)
+        id: stocks
+        run: |
+          python stocks.py --out site_data --cache stock_cache
+          echo "session=$(python -c "import json;print(json.load(open('stock_cache/stocks.json'))['session'])" 2>/dev/null || echo none)" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+      - name: Зберегти кеш акцій
+        if: steps.stocks.outputs.session != '' && steps.stocks.outputs.session != 'none'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: stock_cache
+          key: stocks-${{ steps.stocks.outputs.session }}
+
+      - name: Перевірити ринок і надіслати сигнали
+        run: python bot.py --site-data site_data ${{ inputs.summary && '--summary' || '' }}
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Зберегти пам'ять бота
+        if: always() && hashFiles('state.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: state-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # ---- Сайт-програма (GitHub Pages). Якщо Pages не увімкнено — бот усе одно працює. ----
+      - name: Зібрати сайт
+        if: always()
+        run: |
+          python web/build.py --out _site
+          mkdir -p _site/data && cp -r site_data/. _site/data/ 2>/dev/null || true
+      - name: Підготувати сайт
+        if: always()
+        uses: actions/upload-pages-artifact@v3
+        continue-on-error: true
+        with:
+          path: _site
+      - name: Опублікувати сайт
+        id: deploy
+        if: always()
+        uses: actions/deploy-pages@v4
+        continue-on-error: true

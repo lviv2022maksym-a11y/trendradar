@@ -1,0 +1,42 @@
+{
+  "language": "uk",
+
+  "deposit_usd": 1000,
+  "risk_per_trade_pct": 1.0,
+  "max_position_pct": 100,
+
+  "timeframe": "4h",
+  "daily_trend_filter": true,
+  "fees_pct": 0.1,
+  "atr_stop_mult": 2.0,
+  "atr_target_mult": 3.0,
+
+  "send_charts": true,
+  "paper_trading": true,
+  "verdict_alerts": true,
+  "daily_summary_hour_utc": 6,
+  "weekly_report_weekday": 0,
+
+  "assets": [
+    {"symbol": "BTC-USD", "tv": "BINANCE:BTCUSDT", "crypto": true, "sharp_move_pct": 3.0, "enabled": true},
+    {"symbol": "ETH-USD", "tv": "BINANCE:ETHUSDT", "crypto": true, "sharp_move_pct": 4.0, "enabled": true},
+    {"symbol": "SOL-USD", "tv": "BINANCE:SOLUSDT", "crypto": true, "sharp_move_pct": 5.0, "enabled": true},
+    {"symbol": "GC=F",    "tv": "COMEX:GC1!",      "crypto": false, "sharp_move_pct": 1.5, "enabled": true},
+    {"symbol": "^GSPC",   "tv": "SP:SPX",          "crypto": false, "sharp_move_pct": 1.5, "enabled": true},
+    {"symbol": "^NDX",    "tv": "NASDAQ:NDX",      "crypto": false, "sharp_move_pct": 2.0, "enabled": true}
+  ],
+
+  "trader": {
+    "paper": true,
+    "mode": "confirm",
+    "crypto": ["BTC/USD", "ETH/USD", "SOL/USD"],
+    "stocks": ["SPY", "QQQ", "AAPL", "MSFT", "NVDA"],
+    "risk_per_trade_pct": 1.0,
+    "max_position_pct": 20,
+    "max_open_positions": 3,
+    "daily_loss_limit_pct": 3.0,
+    "max_trades_per_day": 4,
+    "confirm_timeout_min": 60,
+    "min_order_usd": 10
+  }
+}

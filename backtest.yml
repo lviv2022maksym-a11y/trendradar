@@ -1,0 +1,30 @@
+name: TrendRadar · перевірка на історії
+
+on:
+  workflow_dispatch:
+    inputs:
+      tf:
+        description: "Свічки"
+        type: choice
+        options: ["4h", "1h", "1d"]
+        default: "4h"
+      no_filter:
+        description: "Без фільтра денного тренду (для порівняння)"
+        type: boolean
+        default: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install --prefer-binary -r requirements.txt
+      - run: python backtest.py --tf ${{ inputs.tf }} ${{ inputs.no_filter && '--no-filter' || '' }} --telegram
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
