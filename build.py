@@ -13,18 +13,36 @@ import shutil
 from pathlib import Path
 
 WEB = Path(__file__).resolve().parent
-SRC, ASSETS, REPO = WEB / "src", WEB.parent / "assets", WEB.parent
+REPO = WEB.parent if (WEB.parent / "config.json").exists() else WEB
+# Файли шукаємо і в папках (web/src, assets), і поруч — якщо їх завантажили на GitHub без папок
+SRC_DIRS = [WEB / "src", REPO / "web" / "src", WEB, REPO]
+ASSET_DIRS = [REPO / "assets", WEB / "assets", WEB, REPO]
+
+
+def _find(name: str, dirs: list[Path]) -> Path:
+    for d in dirs:
+        if (d / name).is_file():
+            return d / name
+    raise FileNotFoundError(f"Не знайдено файл {name}. Завантажте його на GitHub (у папку web/src чи assets або просто поруч).")
+
+
+def src(name: str) -> Path:
+    return _find(name, SRC_DIRS)
+
+
+def asset(name: str) -> Path:
+    return _find(name, ASSET_DIRS)
 LC_URL = "https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"
 SCRIPTS = ("i18n.js", "engine.js", "data.js", "app.js")
 
 
 def fragment() -> str:
-    shell = (SRC / "shell.html").read_text(encoding="utf-8")
-    css = (SRC / "styles.css").read_text(encoding="utf-8")
-    logo = "data:image/png;base64," + base64.b64encode((ASSETS / "icon-192.png").read_bytes()).decode()
+    shell = src("shell.html").read_text(encoding="utf-8")
+    css = src("styles.css").read_text(encoding="utf-8")
+    logo = "data:image/png;base64," + base64.b64encode(asset("icon-192.png").read_bytes()).decode()
     parts = [f'<script src="{LC_URL}"></script>']
     for name in SCRIPTS:
-        code = (SRC / name).read_text(encoding="utf-8")
+        code = src(name).read_text(encoding="utf-8")
         assert "</script" not in code.lower(), f"{name} містить </script>"
         parts.append(f"<script>\n{code}\n</script>")
     return shell.replace("/*STYLE*/", css).replace("{{LOGO}}", logo).replace("<!--SCRIPTS-->", "\n".join(parts))
@@ -55,9 +73,12 @@ def site(out: Path, frag: str) -> None:
 </html>
 """
     (out / "index.html").write_text(html, encoding="utf-8")
-    (out / "sw.js").write_text((SRC / "sw.js").read_text(encoding="utf-8").replace("__VERSION__", version), encoding="utf-8")
+    sw = src("sw.js").read_text(encoding="utf-8")
+    if "__VERSION__" not in sw:                       # поруч може лежати вже зібраний sw.js із docs/
+        sw = __import__("re").sub(r'trendradar-[0-9a-f]+', "trendradar-__VERSION__", sw)
+    (out / "sw.js").write_text(sw.replace("__VERSION__", version), encoding="utf-8")
     for f in ("icon-192.png", "icon-512.png", "favicon.png"):
-        shutil.copyfile(ASSETS / f, out / f)
+        shutil.copyfile(asset(f), out / f)
     manifest = {
         "name": "TrendRadar", "short_name": "TrendRadar", "lang": "uk",
         "description": "Оцінка ВИГІДНО / ЧЕКАТИ / НЕВИГІДНО, живі графіки, пульс ринку, новини і школа трейдера.",
