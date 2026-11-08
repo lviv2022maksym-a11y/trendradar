@@ -28,6 +28,13 @@ def tf_label(tf: str) -> str:
     return th("tf_" + tf)
 
 
+def fmt_hold(hours: float) -> str:
+    """Орієнтовний час утримання: до доби — у годинах, далі — у днях."""
+    if hours < 24:
+        return th("dur_h", n=max(1, round(hours)))
+    return th("dur_d", n=max(1, round(hours / 24)))
+
+
 def verdict_badge(v: dict) -> str:
     return f"{V_EMOJI[v['verdict']]} <b>{th('v_' + v['verdict'])}</b> · {v['score']}/100"
 
@@ -36,16 +43,32 @@ def trends_line(trends: dict) -> str:
     return "   ".join(f"{tf_label(tf)} {ARROW.get(trends.get(tf, 'flat'), '➡️')}" for tf in ("1h", "4h", "1d"))
 
 
+def tkw(kw: dict) -> dict:
+    """Коди графіків у параметрах тексту ('1d', '4h', '1w') → підписи мовою користувача ('1д', '4г', '1т')."""
+    return {k: t("tf_" + v) if k in ("htf", "mtf", "ltf") and isinstance(v, str) else v for k, v in kw.items()}
+
+
 def factor_lines(top) -> list[str]:
-    return [f"{'✓' if pts > 0 else '✗'} {html.escape(th(k, **kw))}" for k, kw, pts in top]
+    return [f"{'✓' if pts > 0 else '✗'} {th(k, **tkw(kw))}" for k, kw, pts in top]
 
 
 def buttons(asset: dict) -> list | None:
     return [[{"text": th("btn_tv"), "url": TV_URL.format(asset["tv"])}]] if asset.get("tv") else None
 
 
+def history_lines(asset: dict, hist: dict | None) -> list[str]:
+    """Перевірка сигналу на історії активу: good — заробляли, bad — втрачали, few — замало угод."""
+    q = hist.get("q", "few") if hist else "few"
+    if q == "few":
+        return [th("hist_few", n=hist["n"] if hist else 0)]
+    stats = th("hist_line", name=asset_name(asset), wr=hist["wr"], n=hist["n"], avg=hist["avg"])
+    if q == "good":
+        return [th("hold_line", dur=fmt_hold(hist["hours"])), stats, th("hist_ok")]
+    return [stats, th("hist_bad")]   # сюди потрапляємо, лише якщо фільтр історії вимкнено в config.json
+
+
 def signal_message(asset: dict, sig: dict, bar_time: pd.Timestamp, trends: dict, verdict: dict,
-                   cfg: dict, paper_note: str | None = None) -> str:
+                   cfg: dict, paper_note: str | None = None, hist: dict | None = None) -> str:
     typ = sig["type"]
     is_buy = typ in BUY_TYPES
     if is_buy:
@@ -61,7 +84,7 @@ def signal_message(asset: dict, sig: dict, bar_time: pd.Timestamp, trends: dict,
          f"📊 {th('charts')}: {trends_line(trends)}"]
     if is_buy:
         L.append(f"🎯 {th('confidence')}: {'▰' * sig['score']}{'▱' * (MAX_SCORE - sig['score'])} {th('conf_' + confidence(sig['score']))}")
-    L += ["", f"<b>{th('why')}</b>", *[f"✓ {html.escape(th(k, **kw))}" for k, kw in sig["reasons"]]]
+    L += ["", f"<b>{th('why')}</b>", *[f"✓ {th(k, **tkw(kw))}" for k, kw in sig["reasons"]]]
     if is_buy:
         p = sig["plan"]
         lab = [th("entry"), th("stop"), th("target")]
@@ -75,6 +98,7 @@ def signal_message(asset: dict, sig: dict, bar_time: pd.Timestamp, trends: dict,
               th("size_line", size=money(p["size_usd"]), risk=money(p["risk_usd"]), pct=f"{cfg['risk_per_trade_pct']:g}")
               + (f" · {th('capped')}" if p["capped"] else ""),
               th("loss_line", loss=money(loss))]
+        L += [""] + history_lines(asset, hist)
     if paper_note:
         L += ["", paper_note]
     L += ["", f"<i>{th('candle', tf=tf_label(cfg['timeframe']), time=bar_time.strftime('%d.%m %H:%M'))}</i>",
@@ -103,7 +127,8 @@ def fng_emoji(v: int) -> str:
 
 
 def summary_message(blocks: list[list[str]], fng: dict | None, paper_stats: dict | None, now: pd.Timestamp,
-                    news: list[dict] | None = None, stocks: list[dict] | None = None) -> str:
+                    news: list[dict] | None = None, stocks: list[dict] | None = None, top: list | None = None,
+                    skipped: list[str] | None = None) -> str:
     L = [f"📡 <b>TrendRadar · {th('summary_title')}</b>", f"<i>{now:%d.%m.%Y}</i>", ""]
     for b in blocks:
         L += b + [""]
@@ -111,6 +136,17 @@ def summary_message(blocks: list[list[str]], fng: dict | None, paper_stats: dict
         L.append(f"{fng_emoji(fng['value'])} {th('fng')}: <b>{fng['value']}</b>/100 — {th('fng_' + fng['class'])}")
     if paper_stats:
         L.append("💼 " + th("paper_line", bal=money(paper_stats["balance"]), pct=paper_stats["pct"], n=paper_stats["open"]))
+    if top is not None:
+        L += ["", f"<b>{th('top_head')}</b>"]
+        if not top:
+            L.append(th("top_none"))
+        for asset, v, hist in top:
+            if hist and hist.get("q") == "good":
+                L.append("• " + th("top_line", name=asset_name(asset), score=v["score"], dur=fmt_hold(hist["hours"]), wr=hist["wr"]))
+            else:
+                L.append("• " + th("top_line_nohist", name=asset_name(asset), score=v["score"]))
+    if skipped:
+        L.append(th("skipped_line", names=", ".join(skipped)))
     if stocks:
         L += ["", f"📈 <b>{th('stocks_head')}</b>",
               " · ".join(f"{html.escape(x['symbol'])} {x['score']}" for x in stocks)]

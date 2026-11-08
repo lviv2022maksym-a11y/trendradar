@@ -14,7 +14,9 @@
   "send_charts": true,
   "paper_trading": true,
   "verdict_alerts": true,
-  "daily_summary_hour_utc": 6,
+  "history_filter": true,
+  "min_history_trades": 5,
+  "daily_summary_hour_utc": 14,
   "weekly_report_weekday": 0,
 
   "assets": [
@@ -23,7 +25,11 @@
     {"symbol": "SOL-USD", "tv": "BINANCE:SOLUSDT", "crypto": true, "sharp_move_pct": 5.0, "enabled": true},
     {"symbol": "GC=F",    "tv": "COMEX:GC1!",      "crypto": false, "sharp_move_pct": 1.5, "enabled": true},
     {"symbol": "^GSPC",   "tv": "SP:SPX",          "crypto": false, "sharp_move_pct": 1.5, "enabled": true},
-    {"symbol": "^NDX",    "tv": "NASDAQ:NDX",      "crypto": false, "sharp_move_pct": 2.0, "enabled": true}
+    {"symbol": "^NDX",    "tv": "NASDAQ:NDX",      "crypto": false, "sharp_move_pct": 2.0, "enabled": true},
+    {"symbol": "EURUSD=X", "tv": "FX:EURUSD", "crypto": false, "sharp_move_pct": 0.8, "enabled": true},
+    {"symbol": "DX-Y.NYB", "tv": "TVC:DXY", "crypto": false, "sharp_move_pct": 0.7, "enabled": true},
+    {"symbol": "DOGE-USD", "tv": "BINANCE:DOGEUSDT", "crypto": true, "sharp_move_pct": 8.0, "enabled": true},
+    {"symbol": "PEPE24478-USD", "tv": "BINANCE:PEPEUSDT", "crypto": true, "sharp_move_pct": 10.0, "enabled": true}
   ],
 
   "trader": {

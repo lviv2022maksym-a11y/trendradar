@@ -22,14 +22,35 @@ import render
 import settings
 import state as state_mod
 import telegram
+from backtest import MIN_HIST, hist_stats, quality, run as backtest_run
 from data import fetch_fear_greed
 from i18n import ASSET_NAMES, asset_name, set_language, t
 from news import headlines
 from market import analyze_all
 from strategy import BUY_TYPES, signals_at
-from verdict import assess
+from verdict import BUY_AT, assess
 
 VERDICT_ALERT_GAP = pd.Timedelta(hours=8)
+SKIPPED_KEEP = pd.Timedelta(days=7)      # скільки пам'ятаємо пропущені слабкі сигнали
+
+
+def signal_history(df, asset, cfg) -> dict | None:
+    """Як працювали сигнали купівлі цього активу в минулому (на тих самих свічках, що бачить бот):
+    кількість угод, % вгаданих, середній результат, типова тривалість і оцінка q — good / bad / few."""
+    hist = hist_stats(backtest_run(df, asset, cfg), cfg["timeframe"])
+    return {**hist, "q": quality(hist, cfg.get("min_history_trades", MIN_HIST))} if hist else None
+
+
+def history_weak(cfg, hist) -> bool:
+    """Фільтр історії: на цьому активі такі сигнали раніше в середньому давали мінус — купувати не радимо."""
+    return bool(cfg.get("history_filter", True) and hist and hist["q"] == "bad")
+
+
+def downgrade(v: dict, hist: dict) -> dict:
+    """ВИГІДНО → ЧЕКАТИ: правила кажуть «купувати», але на цьому активі вони раніше не заробляли."""
+    f = ("f_hist_bad", {"avg": hist["avg"]}, -30)
+    return {**v, "verdict": "WAIT", "score": min(v["score"], BUY_AT - 1),
+            "factors": [*v["factors"], f], "top": [f, *v["top"][:3]]}
 
 
 def demo_fng() -> dict:
@@ -49,8 +70,9 @@ def chart_png(cfg, asset, df, sig, verdict) -> bytes | None:
         return None
 
 
-def process_asset(cfg, st, asset, res, fng, now, demo) -> list[str] | None:
-    """Обробляє один актив: віртуальні угоди, сигнали, зміна оцінки. Повертає блок для огляду."""
+def process_asset(cfg, st, asset, res, fng, now, demo) -> tuple[list[str], dict, dict | None]:
+    """Обробляє один актив: віртуальні угоди, сигнали, зміна оцінки.
+    Повертає (блок для огляду, оцінка, історія сигналів або None)."""
     sym, df, tf = asset["symbol"], res["df"], cfg["timeframe"]
     i = len(df) - 1
     bar_time = df.index[i]
@@ -66,16 +88,34 @@ def process_asset(cfg, st, asset, res, fng, now, demo) -> list[str] | None:
     sigs = signals_at(df, i, asset, cfg)
     has_buy = any(s["type"] in BUY_TYPES for s in sigs)
     v = assess(df.iloc[i], df.iloc[i - 1], tf, res["trends"], fng, has_buy, asset.get("crypto", False))
+    hist = None
+    if has_buy or v["verdict"] == "BUY":
+        try:
+            hist = signal_history(df, asset, cfg)
+        except Exception:  # noqa: BLE001 — без історії теж надішлемо
+            traceback.print_exc()
+    weak = history_weak(cfg, hist)
+    if weak:
+        if has_buy:   # слабкий сигнал не додає балів до оцінки
+            v = assess(df.iloc[i], df.iloc[i - 1], tf, res["trends"], fng, False, asset.get("crypto", False))
+        if v["verdict"] == "BUY":
+            v = downgrade(v, hist)
     signal_sent = False
     for sig in sigs:
         key = f"{sym}:{sig['type']}"
         if sent.get(key) == bar_time.isoformat():
             continue  # уже надсилали для цієї свічки
+        if weak and sig["type"] in BUY_TYPES:
+            # слабкий сигнал: не надсилаємо і не «купуємо», лише згадаємо в ранковому огляді
+            st.setdefault("skipped", {})[sym] = {"t": bar_time.isoformat(), "avg": round(hist["avg"], 2), "n": hist["n"]}
+            sent[key] = bar_time.isoformat()
+            print(f"[{sym}] пропущено {sig['type']}: раніше {hist['avg']:+.2f}% на угоду ({hist['n']} угод)")
+            continue
         note = None
         if sig["type"] in BUY_TYPES and cfg["paper_trading"]:
             size = paper.open_trade(st, cfg, sym, sig, bar_time, float(df["atr"].iloc[i]))
             note = t("paper_opened", size=render.money(size)) if size else t("paper_busy")
-        text = render.signal_message(asset, sig, bar_time, res["trends"], v, cfg, note)
+        text = render.signal_message(asset, sig, bar_time, res["trends"], v, cfg, note, hist)
         png = chart_png(cfg, asset, df, sig, v)
         ok = telegram.send_photo(png, text, btns) if png else telegram.send(text, btns)
         if ok or demo:
@@ -92,7 +132,7 @@ def process_asset(cfg, st, asset, res, fng, now, demo) -> list[str] | None:
             if telegram.send(render.verdict_change_message(asset, prev["v"], v, res["price"]), btns) or demo:
                 vs[sym] = {"v": v["verdict"], "t": now.isoformat()}
 
-    return render.summary_block(asset, res, v), v
+    return render.summary_block(asset, res, v), v, hist
 
 
 def main() -> None:
@@ -116,7 +156,7 @@ def main() -> None:
 
     today = now.date().isoformat()
     want_summary = args.summary or (now.hour >= cfg["daily_summary_hour_utc"] and st.get("summary_date") != today)
-    blocks, errors, export = [], [], []
+    blocks, errors, export, picks = [], [], [], []
     for asset, res, err in results:
         if err is not None:
             print(f"[{asset['symbol']}] {err}")
@@ -124,8 +164,10 @@ def main() -> None:
             blocks.append([f"⚪ <b>{render.name(asset)}</b> — {t('no_data')}"])
             continue
         try:
-            block, v = process_asset(cfg, st, asset, res, fng, now, args.demo)
+            block, v, hist = process_asset(cfg, st, asset, res, fng, now, args.demo)
             blocks.append(block)
+            if v["verdict"] == "BUY":
+                picks.append((asset, v, hist))
             if not asset.get("crypto"):   # крипта в програмі й так «жива»; сюди — акції та золото
                 export.append({"symbol": asset["symbol"], "names": ASSET_NAMES.get(asset["symbol"], {"en": asset["symbol"]}),
                                "price": round(res["price"], 4), "chg24": round(res["chg24"], 3), "verdict": v["verdict"],
@@ -141,6 +183,9 @@ def main() -> None:
             news = json.loads((site / "news.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             news = None
+    skipped_st = st.setdefault("skipped", {})
+    for key in [k for k, x in skipped_st.items() if now - pd.Timestamp(x["t"]) > SKIPPED_KEEP]:
+        del skipped_st[key]
     if want_summary and blocks:
         pstats = paper.stats(st, cfg) if cfg["paper_trading"] else None
         top = headlines(news, args.lang or cfg["language"])
@@ -151,7 +196,12 @@ def main() -> None:
                 best = sorted((x for x in sdoc.get("stocks", []) if x.get("verdict") == "BUY"), key=lambda x: -x["score"])[:6]
             except (OSError, ValueError, KeyError):
                 best = []
-        if telegram.send(render.summary_message(blocks, fng, pstats, now, top, best)) or args.demo:
+        # спершу перевірені історією, потім за балом
+        picks.sort(key=lambda x: (-(x[2] is not None and x[2]["q"] == "good"), -x[1]["score"]))
+        day_ago = now - pd.Timedelta(hours=24)
+        skipped = [asset_name(a) for a in cfg["assets"]
+                   if a["symbol"] in skipped_st and pd.Timestamp(skipped_st[a["symbol"]]["t"]) >= day_ago]
+        if telegram.send(render.summary_message(blocks, fng, pstats, now, top, best, picks[:3], skipped)) or args.demo:
             st["summary_date"] = today
 
     week_key = f"{now.isocalendar().year}-W{now.isocalendar().week}"
