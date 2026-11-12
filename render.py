@@ -35,6 +35,23 @@ def fmt_hold(hours: float) -> str:
     return th("dur_d", n=max(1, round(hours / 24)))
 
 
+def local_time(ts: pd.Timestamp, cfg: dict) -> tuple[pd.Timestamp, str]:
+    """Час у поясі з config.json (за замовчуванням Чикаго) і підпис міста."""
+    tz = cfg.get("timezone", "America/Chicago")
+    try:
+        loc = ts.tz_convert(tz)
+    except Exception:  # noqa: BLE001 — невідомий пояс: показуємо всесвітній час
+        return ts, "UTC"
+    return loc, th("tz_chicago") if tz == "America/Chicago" else html.escape(tz.split("/")[-1].replace("_", " "))
+
+
+def candle_line(bar_time: pd.Timestamp, cfg: dict) -> str:
+    """«Станом на 11.11, 14:00 за Чикаго · графік 4г». bar_time — початок свічки, тому додаємо її тривалість."""
+    from data import TF_DELTA
+    loc, city = local_time(bar_time + TF_DELTA[cfg["timeframe"]], cfg)
+    return th("candle", time=loc.strftime("%d.%m, %H:%M"), city=city, tf=tf_label(cfg["timeframe"]))
+
+
 def verdict_badge(v: dict) -> str:
     return f"{V_EMOJI[v['verdict']]} <b>{th('v_' + v['verdict'])}</b> · {v['score']}/100"
 
@@ -101,7 +118,7 @@ def signal_message(asset: dict, sig: dict, bar_time: pd.Timestamp, trends: dict,
         L += [""] + history_lines(asset, hist)
     if paper_note:
         L += ["", paper_note]
-    L += ["", f"<i>{th('candle', tf=tf_label(cfg['timeframe']), time=bar_time.strftime('%d.%m %H:%M'))}</i>",
+    L += ["", f"<i>{candle_line(bar_time, cfg)}</i>",
           f"<i>{th('disclaimer')}</i>"]
     return "\n".join(L)
 

@@ -1,5 +1,6 @@
 {
   "language": "uk",
+  "timezone": "America/Chicago",
 
   "deposit_usd": 1000,
   "risk_per_trade_pct": 1.0,
